@@ -761,8 +761,7 @@ def phase_linker_setup(options, state):  # noqa: C901, PLR0912, PLR0915
         diagnostics.warning('unused-command-line-argument', f'{s} is only valid when generating JavaScript output')
 
   if options.oformat == OFormat.MJS:
-    settings.EXPORT_ES6 = 1
-    default_setting('MODULARIZE', 1)
+    default_setting('EXPORT_ES6', 1)
 
   if settings.MODULARIZE and settings.MODULARIZE not in [1, 'instance']:
     exit_with_error(f'Invalid setting "{settings.MODULARIZE}" for MODULARIZE.')
@@ -2877,17 +2876,17 @@ class ScriptSource:
       return '<script>\n%s\n</script>' % self.inline
 
 
-def filter_out_dynamic_libs(options, inputs):
+def filter_out_fake_dynamic_libs(options, inputs):
   # Filters out "fake" dynamic libraries that are really just intermediate object files.
-  def check(input_file):
-    if get_file_suffix(input_file) in DYLIB_EXTENSIONS and not building.is_wasm_dylib(input_file):
+  def is_fake_dylib(input_file):
+    if get_file_suffix(input_file) in DYLIB_EXTENSIONS and os.path.exists(input_file) and not building.is_wasm_dylib(input_file):
       if not options.ignore_dynamic_linking:
         diagnostics.warning('emcc', 'ignoring dynamic library %s because not compiling to JS or HTML, remember to link it when compiling to JS or HTML at the end', os.path.basename(input_file))
-      return False
-    else:
       return True
+    else:
+      return False
 
-  return [f for f in inputs if check(f)]
+  return [f for f in inputs if not is_fake_dylib(f)]
 
 
 def filter_out_duplicate_dynamic_libs(inputs):
@@ -3073,7 +3072,7 @@ def phase_calculate_linker_inputs(options, state, linker_inputs):
   # "fake" dynamic libraries, since otherwise we will end up with
   # multiple copies in the final executable.
   if options.oformat == OFormat.OBJECT or options.ignore_dynamic_linking:
-    linker_args = filter_out_dynamic_libs(options, linker_args)
+    linker_args = filter_out_fake_dynamic_libs(options, linker_args)
   else:
     linker_args = filter_out_duplicate_dynamic_libs(linker_args)
 
