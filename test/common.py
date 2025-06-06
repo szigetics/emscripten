@@ -978,6 +978,8 @@ class RunnerCore(unittest.TestCase, metaclass=RunnerMeta):
   def check_dylink(self):
     if self.get_setting('WASM_ESM_INTEGRATION'):
       self.skipTest('dynamic linking not supported with WASM_ESM_INTEGRATION')
+    if '-lllvmlibc' in self.emcc_args:
+      self.skipTest('dynamic linking not supported with llvm-libc')
     if self.is_wasm2js():
       self.skipTest('dynamic linking not supported with wasm2js')
     if '-fsanitize=undefined' in self.emcc_args:
@@ -1364,7 +1366,7 @@ class RunnerCore(unittest.TestCase, metaclass=RunnerMeta):
   #                  libraries, for example
   def get_emcc_args(self, main_file=False, compile_only=False, asm_only=False):
     def is_ldflag(f):
-      return any(f.startswith(s) for s in ['-sEXPORT_ES6', '--proxy-to-worker', '-sGL_TESTING', '-sPROXY_TO_WORKER', '-sPROXY_TO_PTHREAD', '-sENVIRONMENT=', '--pre-js=', '--post-js=', '-sPTHREAD_POOL_SIZE='])
+      return f.startswith('-l') or any(f.startswith(s) for s in ['-sEXPORT_ES6', '--proxy-to-worker', '-sGL_TESTING', '-sPROXY_TO_WORKER', '-sPROXY_TO_PTHREAD', '-sENVIRONMENT=', '--pre-js=', '--post-js=', '-sPTHREAD_POOL_SIZE='])
 
     args = self.serialize_settings(compile_only or asm_only) + self.emcc_args
     if asm_only:
@@ -1693,12 +1695,11 @@ class RunnerCore(unittest.TestCase, metaclass=RunnerMeta):
   def check_expected_size_in_file(self, desc, filename, size):
     if EMTEST_REBASELINE:
       create_file(filename, f'{size}\n', absolute=True)
-    size_slack = 0.05
     expected_size = int(read_file(filename).strip())
     delta = size - expected_size
     ratio = abs(delta) / float(expected_size)
     print('  seen %s size: %d (expected: %d) (delta: %d), ratio to expected: %f' % (desc, size, expected_size, delta, ratio))
-    self.assertLess(ratio, size_slack)
+    self.assertEqual(size, expected_size)
 
   library_cache: Dict[str, Tuple[str, object]] = {}
 

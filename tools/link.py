@@ -33,9 +33,10 @@ from . import system_libs
 from . import utils
 from . import webassembly
 from . import extract_metadata
+from .cmdline import OFormat
 from .utils import read_file, write_file, delete_file
 from .utils import removeprefix, exit_with_error
-from .shared import in_temp, safe_copy, do_replace, OFormat
+from .shared import in_temp, safe_copy, do_replace
 from .shared import DEBUG, WINDOWS, DYLIB_EXTENSIONS
 from .shared import unsuffixed, unsuffixed_basename, get_file_suffix
 from .settings import settings, default_setting, user_settings, JS_ONLY_SETTINGS, DEPRECATED_SETTINGS
@@ -1046,10 +1047,6 @@ def phase_linker_setup(options, linker_args):  # noqa: C901, PLR0912, PLR0915
 
   # Use settings
 
-  if settings.DEBUG_LEVEL > 1 and options.use_closure_compiler:
-    diagnostics.warning('emcc', 'disabling closure because debug info was requested')
-    options.use_closure_compiler = False
-
   if settings.WASM == 2 and settings.SINGLE_FILE:
     exit_with_error('cannot have both WASM=2 and SINGLE_FILE enabled at the same time')
 
@@ -1385,7 +1382,6 @@ def phase_linker_setup(options, linker_args):  # noqa: C901, PLR0912, PLR0915
   if settings.SAFE_HEAP:
     # SAFE_HEAP check includes calling emscripten_get_sbrk_ptr() from wasm
     settings.REQUIRED_EXPORTS += ['emscripten_get_sbrk_ptr', 'emscripten_stack_get_base']
-    settings.DEFAULT_LIBRARY_FUNCS_TO_INCLUDE += ['$unSign']
 
   if not settings.DECLARE_ASM_MODULE_EXPORTS:
     settings.DEFAULT_LIBRARY_FUNCS_TO_INCLUDE += ['$exportWasmSymbols']
@@ -2248,6 +2244,8 @@ def phase_final_emitting(options, target, js_target, wasm_target):
 
   target_basename = unsuffixed_basename(target)
 
+  utils.convert_line_endings_in_file(js_target, options.output_eol)
+
   # If we were asked to also generate HTML, do that
   if options.oformat == OFormat.HTML:
     generate_html(target, options, js_target, target_basename,
@@ -2258,9 +2256,6 @@ def phase_final_emitting(options, target, js_target, wasm_target):
   if settings.SPLIT_MODULE:
     diagnostics.warning('experimental', 'the SPLIT_MODULE setting is experimental and subject to change')
     do_split_module(wasm_target, options)
-
-  if not settings.SINGLE_FILE:
-    utils.convert_line_endings_in_file(js_target, options.output_eol)
 
   if options.executable:
     make_js_executable(js_target)

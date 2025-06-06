@@ -1154,14 +1154,14 @@ addToLibrary({
         var alias = aliases[i];
         var aliasBuf = _malloc(alias.length + 1);
         stringToAscii(alias, aliasBuf);
-        {{{ makeSetValue('aliasListBuf', 'j', 'aliasBuf', POINTER_TYPE) }}};
+        {{{ makeSetValue('aliasListBuf', 'j', 'aliasBuf', '*') }}};
       }
-      {{{ makeSetValue('aliasListBuf', 'j', '0', POINTER_TYPE) }}}; // Terminating NULL pointer.
+      {{{ makeSetValue('aliasListBuf', 'j', '0', '*') }}}; // Terminating NULL pointer.
 
       // generate protoent
       var pe = _malloc({{{ C_STRUCTS.protoent.__size__ }}});
-      {{{ makeSetValue('pe', C_STRUCTS.protoent.p_name, 'nameBuf', POINTER_TYPE) }}};
-      {{{ makeSetValue('pe', C_STRUCTS.protoent.p_aliases, 'aliasListBuf', POINTER_TYPE) }}};
+      {{{ makeSetValue('pe', C_STRUCTS.protoent.p_name, 'nameBuf', '*') }}};
+      {{{ makeSetValue('pe', C_STRUCTS.protoent.p_aliases, 'aliasListBuf', '*') }}};
       {{{ makeSetValue('pe', C_STRUCTS.protoent.p_proto, 'proto', 'i32') }}};
       return pe;
     };
@@ -1391,8 +1391,10 @@ addToLibrary({
     }
   },
 
-  $emscriptenLog__deps: ['$getCallstack'],
-  $emscriptenLog: (flags, str) => {
+  _emscripten_log_formatted__deps: ['$getCallstack'],
+  _emscripten_log_formatted: (flags, str) => {
+    str = UTF8ToString(str);
+
     if (flags & {{{ cDefs.EM_LOG_C_STACK | cDefs.EM_LOG_JS_STACK }}}) {
       str = str.replace(/\s+$/, ''); // Ensure the message and the callstack are joined cleanly with exactly one newline.
       str += (str.length > 0 ? '\n' : '') + getCallstack(flags);
@@ -1415,13 +1417,6 @@ addToLibrary({
     } else {
       out(str);
     }
-  },
-
-  emscripten_log__deps: ['$formatString', '$emscriptenLog'],
-  emscripten_log: (flags, format, varargs) => {
-    var result = formatString(format, varargs);
-    var str = UTF8ArrayToString(result);
-    emscriptenLog(flags, str);
   },
 
   // We never free the return values of this function so we need to allocate

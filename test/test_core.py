@@ -1832,7 +1832,7 @@ int main() {
     self.set_setting('EXPORTED_FUNCTIONS', ['_main', '_save_me_aimee'])
     self.do_core_test('test_emscripten_api.c')
 
-    # Sanitizers are not compatible with LINKABLE (dynamic linking.
+    # Sanitizers are not compatible with LINKABLE (dynamic linking).
     if not is_sanitizing(self.emcc_args) and not self.is_wasm64():
       # test EXPORT_ALL
       self.clear_setting('EXPORTED_FUNCTIONS')
@@ -6850,13 +6850,13 @@ void* operator new(size_t size) {
     };
     Module.postRun = () => {
       var FileData = Array.from(MEMFS.getFileDataAsTypedArray(FS.root.contents['filename-1.ppm']));
-      out("Data: " + JSON.stringify(FileData.map(function(x) { return unSign(x, 8) })));
+      out("Data: " + JSON.stringify(FileData));
     };
     ''')
     self.emcc_args += ['--pre-js', 'pre.js', '-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=$unSign', '-sINCOMING_MODULE_JS_API=[preRun, postRun]']
 
-    ppm_data = str(list(bytearray(read_binary(test_file('poppler/ref.ppm')))))
-    self.do_run('', ppm_data.replace(' ', ''),
+    ppm_data = str(list(read_binary(test_file('poppler/ref.ppm'))))
+    self.do_run('', 'Data: ' + ppm_data.replace(' ', ''),
                 libraries=poppler,
                 args=['-scale-to', '512', 'paper.pdf', 'filename'])
 
@@ -9956,6 +9956,7 @@ asani = make_run('asani', emcc_args=['-fsanitize=address', '--profiling', '--pre
 
 # Experimental modes (not tested by CI)
 minimal0 = make_run('minimal0', emcc_args=['-g'], settings={'MINIMAL_RUNTIME': 1})
+llvmlibc = make_run('llvmlibc', emcc_args=['-lllvmlibc'])
 
 # TestCoreBase is just a shape for the specific subclasses, we don't test it itself
 del TestCoreBase # noqa

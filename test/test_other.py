@@ -104,6 +104,22 @@ def uses_canonical_tmp(func):
   return decorated
 
 
+def also_with_llvm_libc(f):
+  assert callable(f)
+
+  @wraps(f)
+  def metafunc(self, llvm_libc, *args, **kwargs):
+    if shared.DEBUG:
+      print('parameterize:llvm_libc=%d' % llvm_libc)
+    if llvm_libc:
+      self.emcc_args += ['-lllvmlibc']
+    f(self, *args, **kwargs)
+
+  parameterize(metafunc, {'': (False,),
+                          'llvm_libc': (True,)})
+  return metafunc
+
+
 def with_both_compilers(f):
   assert callable(f)
 
@@ -2138,6 +2154,7 @@ Module['postRun'] = () => {
 
   @node_pthreads
   @also_with_modularize
+  @flaky('https://github.com/emscripten-core/emscripten/issues/24500')
   def test_dylink_pthread_static_data(self):
     # Test that a side module uses the same static data region for global objects across all threads
 
@@ -2146,45 +2163,47 @@ Module['postRun'] = () => {
     #   the memory is zero-initialized only once (and not once per thread).
     # * The global object must have a constructor to make sure that it is
     #   constructed only once (and not once per thread).
-    create_file('side.cpp', r'''
-      struct Data {
-          Data() : value(42) {}
-          int value;
-      } data;
-      int * get_address() {
-          return &data.value;
+    create_file('side.c', r'''
+      int value = 0;
+
+      __attribute__((constructor)) void ctor(void) {
+        value = 42;
+      }
+
+      int* get_address() {
+        return &value;
       }
       ''')
-    self.run_process([
-      EMCC,
-      '-o', 'side.wasm',
-      'side.cpp',
-      '-pthread', '-Wno-experimental',
-      '-sSIDE_MODULE'])
+    self.run_process([EMCC, '-o', 'side.wasm', 'side.c', '-pthread', '-Wno-experimental', '-sSIDE_MODULE'])
 
-    create_file('main.cpp', r'''
+    create_file('main.c', r'''
+      #include <assert.h>
       #include <stdio.h>
-      #include <thread>
-      int * get_address();
-      int main(void) {
-          *get_address() = 123;
-          std::thread([]{
-            printf("%d\n", *get_address());
-          }).join();
-          return 0;
+      #include <pthread.h>
+
+      int* get_address();
+
+      void* thread_main(void* arg) {
+        assert(*get_address() == 123);
+        printf("%d\n", *get_address());
+        return NULL;
+      }
+
+      int main() {
+        assert(*get_address() == 42);
+        *get_address() = 123;
+        pthread_t t;
+        pthread_create(&t, NULL, thread_main, NULL);
+        pthread_join(t, NULL);
+        return 0;
       }
       ''')
 
-    self.do_runf(
-      'main.cpp',
-      '123',
-      emcc_args=[
-        '-pthread', '-Wno-experimental',
-        '-sPROXY_TO_PTHREAD',
-        '-sEXIT_RUNTIME',
-        '-sMAIN_MODULE=2',
-        'side.wasm',
-      ])
+    self.do_runf('main.c', '123', emcc_args=['-pthread', '-Wno-experimental',
+                                             '-sPROXY_TO_PTHREAD',
+                                             '-sEXIT_RUNTIME',
+                                             '-sMAIN_MODULE=2',
+                                             'side.wasm'])
 
   def test_dylink_pthread_warning(self):
     err = self.expect_fail([EMCC, '-Werror', '-sMAIN_MODULE', '-pthread', test_file('hello_world.c')])
@@ -8999,21 +9018,29 @@ int main() {
   @parameterized({
     '': ([],),
     'proxy_to_worker': (['--proxy-to-worker'],),
+    'single_file': (['-sSINGLE_FILE'],),
     'proxy_to_worker_wasm2js': (['--proxy-to-worker', '-sWASM=0'],),
   })
   def test_output_eol(self, params):
     for eol in ('windows', 'linux'):
       self.clear()
       print('checking eol: ', eol)
-      self.run_process([EMCC, test_file('hello_world.c'), '-o', 'a.html', '--output-eol', eol] + params)
-      for f in ['a.html', 'a.js']:
+      if '-sSINGLE_FILE' not in params:
+        params.append('-oa.out.html')
+      self.run_process([EMCC, test_file('hello_world.c'), '--output-eol', eol] + params)
+      out_files = ['a.out.js']
+      html_file = 'a.out.html'
+      if '-sSINGLE_FILE' in params:
+        self.assertNotExists(html_file)
+      else:
+        out_files.append(html_file)
+      for f in out_files:
         self.assertExists(f)
         if eol == 'linux':
           expected_ending = '\n'
         else:
           expected_ending = '\r\n'
-
-        self.assertEqual(line_endings.check_line_endings(f, expect_only=expected_ending), 0, f'expected on ly {eol} line endingsn in {f}')
+        self.assertEqual(line_endings.check_line_endings(f, expect_only=expected_ending), 0, f'expected only {eol} line endings in {f}')
 
   def test_bad_memory_size(self):
     # if user changes INITIAL_MEMORY at runtime, the wasm module may not accept the memory import if
@@ -9363,6 +9390,7 @@ int main() {
     # lead to different inlining decisions which add or remove a function
     self.run_codesize_test('hello_libcxx.cpp', args, check_funcs=False)
 
+  @crossplatform
   @parameterized({
     'O0': ([],),
     'O1': (['-O1'],),
@@ -11783,6 +11811,7 @@ int main () {
     smallest_code_size_args = ['-sMINIMAL_RUNTIME=2',
                                '-sENVIRONMENT=web',
                                '-sTEXTDECODER=2',
+                               '-sDYNAMIC_EXECUTION=0',
                                '-sABORTING_MALLOC=0',
                                '-sALLOW_MEMORY_GROWTH=0',
                                '-sDECLARE_ASM_MODULE_EXPORTS',
@@ -12794,27 +12823,27 @@ int main(void) {
 
   def test_warning_flags(self):
     self.run_process([EMCC, '-c', '-o', 'hello.o', test_file('hello_world.c')])
-    cmd = [EMCC, 'hello.o', '-o', 'a.js', '-g', '--closure=1']
+    cmd = [EMCC, 'hello.o', '-o', 'a.js', '-g', '--llvm-opts=""']
 
     # warning that is enabled by default
     stderr = self.run_process(cmd, stderr=PIPE).stderr
-    self.assertContained('emcc: warning: disabling closure because debug info was requested [-Wemcc]', stderr)
+    self.assertContained('emcc: warning: --llvm-opts is deprecated.  All non-emcc args are passed through to clang. [-Wdeprecated]', stderr)
 
     # -w to suppress warnings
     stderr = self.run_process(cmd + ['-w'], stderr=PIPE).stderr
     self.assertNotContained('warning', stderr)
 
     # -Wno-emcc to suppress just this one warning
-    stderr = self.run_process(cmd + ['-Wno-emcc'], stderr=PIPE).stderr
+    stderr = self.run_process(cmd + ['-Wno-deprecated'], stderr=PIPE).stderr
     self.assertNotContained('warning', stderr)
 
     # with -Werror should fail
     stderr = self.expect_fail(cmd + ['-Werror'])
-    self.assertContained('error: disabling closure because debug info was requested [-Wemcc] [-Werror]', stderr)
+    self.assertContained('error: --llvm-opts is deprecated.  All non-emcc args are passed through to clang. [-Wdeprecated] [-Werror]', stderr)
 
     # with -Werror + -Wno-error=<type> should only warn
-    stderr = self.run_process(cmd + ['-Werror', '-Wno-error=emcc'], stderr=PIPE).stderr
-    self.assertContained('emcc: warning: disabling closure because debug info was requested [-Wemcc]', stderr)
+    stderr = self.run_process(cmd + ['-Werror', '-Wno-error=deprecated'], stderr=PIPE).stderr
+    self.assertContained('emcc: warning: --llvm-opts is deprecated.  All non-emcc args are passed through to clang. [-Wdeprecated]', stderr)
 
     # check that `-Werror=foo` also enales foo
     stderr = self.expect_fail(cmd + ['-Werror=legacy-settings', '-sTOTAL_MEMORY'])
@@ -15500,19 +15529,6 @@ w:0,t:0x[0-9a-fA-F]+: formatted: 42
   def test_quick_exit(self):
     self.do_other_test('test_quick_exit.c')
 
-  @requires_wasm64
-  @requires_node_canary
-  def test_memory64_proxies(self):
-    self.run_process([EMCC, test_file('hello_world.c'),
-                      '-sMEMORY64=1',
-                      '-sINITIAL_MEMORY=5gb',
-                      '-sMAXIMUM_MEMORY=5gb',
-                      '-sALLOW_MEMORY_GROWTH',
-                      '-sEXPORTED_FUNCTIONS=_malloc,_main',
-                      '-Wno-experimental',
-                      '--extern-post-js', test_file('other/test_memory64_proxies.js')])
-    self.run_js('a.out.js')
-
   def test_no_minify(self):
     # Test that comments are preserved with `--minify=0` is used, even in `-Oz` builds.
     # This allows the output of emscripten to be run through the closure compiler as
@@ -15597,6 +15613,11 @@ addToLibrary({
 
   def test_strict_closure(self):
     self.emcc(test_file('hello_world.c'), ['-sSTRICT', '--closure=1'])
+
+  def test_closure_debug(self):
+    self.emcc(test_file('hello_world.c'), ['-sSTRICT', '--closure=1', '-g'])
+    src = read_file('a.out.js')
+    self.assertContained('$Module$$', src)
 
   def test_arguments_global(self):
     self.emcc(test_file('hello_world_argv.c'), ['-sENVIRONMENT=web', '-sSTRICT', '--closure=1', '-O2'])
@@ -15685,6 +15706,7 @@ addToLibrary({
   def test_llrint(self):
     self.do_other_test('test_llrint.c')
 
+  @also_with_llvm_libc
   def test_strings(self):
     self.do_other_test('test_strings.c', args=['wowie', 'too', '74'])
 
